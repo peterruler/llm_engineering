@@ -5,12 +5,15 @@ from litellm import completion
 from pydantic import BaseModel, Field
 from pathlib import Path
 from tenacity import retry, wait_exponential
+import json
+import os
+import re
 
 
 load_dotenv(override=True)
 
-MODEL = "openai/gpt-4.1-nano"
-# MODEL = "groq/openai/gpt-oss-120b"
+MODEL = os.getenv("OLLAMA_MODEL", "ollama_chat/gpt-oss:120b")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 DB_NAME = str(Path(__file__).parent.parent / "preprocessed_db")
 KNOWLEDGE_BASE_PATH = Path(__file__).parent.parent / "knowledge-base"
 SUMMARIES_PATH = Path(__file__).parent.parent / "summaries"
@@ -26,6 +29,15 @@ collection = chroma.get_or_create_collection(collection_name)
 
 RETRIEVAL_K = 20
 FINAL_K = 10
+
+
+def ollama_completion(**kwargs):
+    return completion(
+        model=MODEL,
+        api_base=OLLAMA_BASE_URL,
+        temperature=0,
+        **kwargs,
+    )
 
 SYSTEM_PROMPT = """
 You are a knowledgeable, friendly assistant representing the company Insurellm.
@@ -50,6 +62,29 @@ class RankOrder(BaseModel):
     )
 
 
+def parse_rank_order(reply: str, chunk_count: int) -> list[int]:
+    """Accept either {"order": [...]} or a bare ranked list from local models."""
+    try:
+        parsed = json.loads(reply)
+        if isinstance(parsed, dict):
+            order = parsed["order"]
+        else:
+            order = parsed
+    except json.JSONDecodeError:
+        order = [int(match) for match in re.findall(r"\d+", reply)]
+
+    seen = set()
+    clean_order = []
+    for item in order:
+        item = int(item)
+        if 1 <= item <= chunk_count and item not in seen:
+            seen.add(item)
+            clean_order.append(item)
+
+    clean_order.extend(i for i in range(1, chunk_count + 1) if i not in seen)
+    return clean_order
+
+
 @retry(wait=wait)
 def rerank(question, chunks):
     system_prompt = """
@@ -57,20 +92,20 @@ You are a document re-ranker.
 You are provided with a question and a list of relevant chunks of text from a query of a knowledge base.
 The chunks are provided in the order they were retrieved; this should be approximately ordered by relevance, but you may be able to improve on that.
 You must rank order the provided chunks by relevance to the question, with the most relevant chunk first.
-Reply only with the list of ranked chunk ids, nothing else. Include all the chunk ids you are provided with, reranked.
+Reply only with a JSON object like {"order": [1, 2, 3]}, nothing else. Include all the chunk ids you are provided with, reranked.
 """
     user_prompt = f"The user has asked the following question:\n\n{question}\n\nOrder all the chunks of text by relevance to the question, from most relevant to least relevant. Include all the chunk ids you are provided with, reranked.\n\n"
     user_prompt += "Here are the chunks:\n\n"
     for index, chunk in enumerate(chunks):
         user_prompt += f"# CHUNK ID: {index + 1}:\n\n{chunk.page_content}\n\n"
-    user_prompt += "Reply only with the list of ranked chunk ids, nothing else."
+    user_prompt += 'Reply only with a JSON object like {"order": [1, 2, 3]}, nothing else.'
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-    response = completion(model=MODEL, messages=messages, response_format=RankOrder)
+    response = ollama_completion(messages=messages, format="json")
     reply = response.choices[0].message.content
-    order = RankOrder.model_validate_json(reply).order
+    order = parse_rank_order(reply, len(chunks))
     return [chunks[i - 1] for i in order]
 
 
@@ -103,7 +138,7 @@ Respond only with a short, refined question that you will use to search the Know
 It should be a VERY short specific question most likely to surface content. Focus on the question details.
 IMPORTANT: Respond ONLY with the precise knowledgebase query, nothing else.
 """
-    response = completion(model=MODEL, messages=[{"role": "system", "content": message}])
+    response = ollama_completion(messages=[{"role": "system", "content": message}])
     return response.choices[0].message.content
 
 
@@ -141,5 +176,5 @@ def answer_question(question: str, history: list[dict] = []) -> tuple[str, list]
     """
     chunks = fetch_context(question)
     messages = make_rag_messages(question, history, chunks)
-    response = completion(model=MODEL, messages=messages)
+    response = ollama_completion(messages=messages)
     return response.choices[0].message.content, chunks
