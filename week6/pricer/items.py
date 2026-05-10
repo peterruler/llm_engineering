@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from datasets import Dataset, DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, Features, Value, load_dataset
 from typing import Optional, Self
 
 
@@ -33,11 +33,23 @@ class Item(BaseModel):
     @staticmethod
     def push_to_hub(dataset_name: str, train: list[Self], val: list[Self], test: list[Self]):
         """Push Item lists to HuggingFace Hub"""
+        features = Features(
+            {
+                "title": Value("string"),
+                "category": Value("string"),
+                "price": Value("float64"),
+                "full": Value("string"),
+                "weight": Value("float64"),
+                "summary": Value("string"),
+                "prompt": Value("string"),
+                "id": Value("int64"),
+            }
+        )
         DatasetDict(
             {
-                "train": Dataset.from_list([item.model_dump() for item in train]),
-                "validation": Dataset.from_list([item.model_dump() for item in val]),
-                "test": Dataset.from_list([item.model_dump() for item in test]),
+                "train": Dataset.from_list([item.model_dump() for item in train], features=features),
+                "validation": Dataset.from_list([item.model_dump() for item in val], features=features),
+                "test": Dataset.from_list([item.model_dump() for item in test], features=features),
             }
         ).push_to_hub(dataset_name)
 
