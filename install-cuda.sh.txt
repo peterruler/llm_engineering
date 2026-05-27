@@ -1,0 +1,16 @@
+#!/bin/bash
+# 1. Activate your venv
+cd /data/Projects/llm_engineering
+source .venv/bin/activate
+# 2. Make sure pip exists in the venv
+python -m ensurepip --upgrade
+python -m pip install -U pip setuptools wheel
+# 3. Remove CPU-only torch
+python -m pip uninstall -y torch torchvision torchaudio
+# 4. Install CUDA PyTorch
+python -m pip install --pre torch torchvision torchaudio \
+  --index-url https://download.pytorch.org/whl/nightly/cu130
+
+.venv/bin/python -m pip install --force-reinstall transformers
+.venv/bin/python -m pip install --force-reinstall "transformers==4.57.1" "huggingface-hub==0.36.0" "packaging==25.0" "fsspec==2025.3.0"
+.venv/bin/python -m pip install "urllib3<2.4.0,>=1.24.2"
