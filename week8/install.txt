@@ -1,0 +1,3 @@
+python -m pip install modal
+modal setup
+# /home/peterstroessler/.modal.toml
