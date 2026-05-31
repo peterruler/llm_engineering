@@ -1,6 +1,10 @@
 import re
 from typing import List, Dict
 from openai import OpenAI
+import transformers.utils.import_utils as transformers_import_utils
+
+# This agent only needs text embeddings; skip a broken optional torchvision import.
+transformers_import_utils._torchvision_available = False
 from sentence_transformers import SentenceTransformer
 from agents.agent import Agent
 
